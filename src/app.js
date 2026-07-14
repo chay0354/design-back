@@ -1,6 +1,11 @@
 import cors from 'cors'
 import express from 'express'
 import { createClient } from '@supabase/supabase-js'
+import {
+  fetchImageBuffer,
+  fetchOgImage,
+  isValidHttpUrl,
+} from './productImage.js'
 
 function getAllowedOrigins() {
   const origins = new Set([
@@ -52,7 +57,47 @@ app.use(
 app.use(express.json())
 
 app.get('/', (_req, res) => {
-  res.json({ ok: true, service: 'design-back', endpoints: ['/api/health'] })
+  res.json({
+    ok: true,
+    service: 'design-back',
+    endpoints: ['/api/health', '/api/product-image', '/api/image-proxy'],
+  })
+})
+
+app.get('/api/product-image', async (req, res) => {
+  const sourceUrl = req.query.url
+  if (!isValidHttpUrl(sourceUrl)) {
+    res.status(400).json({ error: 'Invalid or missing url' })
+    return
+  }
+
+  try {
+    const imageUrl = await fetchOgImage(sourceUrl.trim())
+    if (!imageUrl) {
+      res.status(404).json({ error: 'No og:image found for this link' })
+      return
+    }
+    res.json({ imageUrl, sourceUrl: sourceUrl.trim() })
+  } catch (err) {
+    res.status(502).json({ error: String(err) })
+  }
+})
+
+app.get('/api/image-proxy', async (req, res) => {
+  const imageUrl = req.query.url
+  if (!isValidHttpUrl(imageUrl)) {
+    res.status(400).json({ error: 'Invalid or missing url' })
+    return
+  }
+
+  try {
+    const { buffer, contentType } = await fetchImageBuffer(imageUrl.trim())
+    res.setHeader('Content-Type', contentType.split(';')[0])
+    res.setHeader('Cache-Control', 'public, max-age=86400')
+    res.send(buffer)
+  } catch (err) {
+    res.status(502).json({ error: String(err) })
+  }
 })
 
 app.get('/api/health', async (_req, res) => {

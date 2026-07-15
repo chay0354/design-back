@@ -3,12 +3,14 @@ const USER_AGENT =
 
 const OG_IMAGE_RE = /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
 const OG_IMAGE_RE_ALT = /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i
+const IMAGE_PATH_LIST_RE = /"imagePathList"\s*:\s*\[\s*"([^"]+)"/i
+const SUMM_IMAGE_PATH_RE = /"summImagePath"\s*:\s*"([^"]+)"/i
 const ALICDN_IMAGE_RE = /https?:\/\/[^"'\s]+\.alicdn\.com\/[^"'\s]+\.(?:jpg|jpeg|png|webp)/i
 const ITEM_ID_RE = /\/item\/(\d+)\.html/i
 
 const FETCH_HEADERS = {
   'User-Agent': USER_AGENT,
-  Accept: 'text/html,application/xhtml+xml',
+  Accept: 'text/html,application/xhtml+xml,application/json',
   'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
 }
 
@@ -26,6 +28,16 @@ function extractImageFromHtml(html) {
     if (match?.[1]) {
       return normalizeImageUrl(match[1])
     }
+  }
+
+  const listMatch = html.match(IMAGE_PATH_LIST_RE)
+  if (listMatch?.[1]) {
+    return normalizeImageUrl(listMatch[1])
+  }
+
+  const summMatch = html.match(SUMM_IMAGE_PATH_RE)
+  if (summMatch?.[1]) {
+    return normalizeImageUrl(summMatch[1])
   }
 
   const alicdnMatch = html.match(ALICDN_IMAGE_RE)
@@ -62,6 +74,22 @@ async function fetchPageHtml(pageUrl) {
   }
 }
 
+async function resolveItemIdFromRedirect(pageUrl) {
+  const response = await fetch(pageUrl.trim(), {
+    headers: FETCH_HEADERS,
+    redirect: 'manual',
+  })
+
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get('location')
+    if (location) {
+      return extractItemId(new URL(location, pageUrl).toString())
+    }
+  }
+
+  return null
+}
+
 export function isValidHttpUrl(value) {
   if (typeof value !== 'string' || !value.trim()) return false
 
@@ -75,33 +103,49 @@ export function isValidHttpUrl(value) {
 
 export async function fetchOgImage(pageUrl) {
   const trimmedUrl = pageUrl.trim()
-  const first = await fetchPageHtml(trimmedUrl)
-  const image = extractImageFromHtml(first.html)
-  if (image) {
-    return image
+  let firstPage = null
+
+  try {
+    firstPage = await fetchPageHtml(trimmedUrl)
+    const image = extractImageFromHtml(firstPage.html)
+    if (image) {
+      return image
+    }
+  } catch {
+    // Fall back to resolving the item id from short-link redirects.
   }
 
-  const itemId = extractItemId(first.finalUrl, trimmedUrl)
+  const itemId =
+    extractItemId(firstPage?.finalUrl, trimmedUrl) ||
+    (await resolveItemIdFromRedirect(trimmedUrl))
+
   if (!itemId) {
     return null
   }
 
   const candidates = [
+    firstPage?.finalUrl,
+    trimmedUrl,
     `https://he.aliexpress.com/item/${itemId}.html`,
     `https://www.aliexpress.com/item/${itemId}.html`,
-  ]
+    `https://m.aliexpress.com/item/${itemId}.html`,
+  ].filter(Boolean)
+
+  const seen = new Set()
 
   for (const candidate of candidates) {
-    if (candidate === first.finalUrl) continue
+    if (seen.has(candidate)) continue
+    seen.add(candidate)
 
     try {
-      const retry = await fetchPageHtml(candidate)
-      const retryImage = extractImageFromHtml(retry.html)
-      if (retryImage) {
-        return retryImage
+      const page =
+        firstPage && candidate === firstPage.finalUrl ? firstPage : await fetchPageHtml(candidate)
+      const image = extractImageFromHtml(page.html)
+      if (image) {
+        return image
       }
     } catch {
-      // Try the next canonical AliExpress URL.
+      // Try the next AliExpress URL variant.
     }
   }
 

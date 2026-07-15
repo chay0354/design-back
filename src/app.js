@@ -11,6 +11,9 @@ function getAllowedOrigins() {
   const origins = new Set([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'https://petite-dreams.com',
+    'https://www.petite-dreams.com',
+    'https://design-front.vercel.app',
   ])
 
   if (process.env.FRONTEND_URL) {
@@ -28,10 +31,15 @@ function isAllowedOrigin(origin) {
 
   try {
     const { hostname } = new URL(origin)
-    return hostname.endsWith('.vercel.app')
+    if (hostname.endsWith('.vercel.app')) return true
+    if (hostname === 'petite-dreams.com' || hostname.endsWith('.petite-dreams.com')) {
+      return true
+    }
   } catch {
     return false
   }
+
+  return false
 }
 
 function getSupabase() {
@@ -74,7 +82,7 @@ app.get('/api/product-image', async (req, res) => {
   try {
     const imageUrl = await fetchOgImage(sourceUrl.trim())
     if (!imageUrl) {
-      res.status(404).json({ error: 'No og:image found for this link' })
+      res.status(422).json({ error: 'No product image found for this link' })
       return
     }
     res.json({ imageUrl, sourceUrl: sourceUrl.trim() })

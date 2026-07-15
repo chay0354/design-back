@@ -59,8 +59,13 @@ const app = express()
 app.use(
   cors({
     origin(origin, callback) {
-      callback(null, isAllowedOrigin(origin))
+      if (!origin || isAllowedOrigin(origin)) {
+        callback(null, origin || true)
+        return
+      }
+      callback(null, false)
     },
+    methods: ['GET', 'HEAD', 'OPTIONS'],
   }),
 )
 app.use(express.json())
@@ -152,6 +157,19 @@ app.get('/api/health', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, supabase: String(err) })
   }
+})
+
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    next(err)
+    return
+  }
+  const origin = req.headers.origin
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+  }
+  res.status(500).json({ error: String(err) })
 })
 
 export default app

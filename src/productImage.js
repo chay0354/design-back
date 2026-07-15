@@ -6,6 +6,12 @@ const OG_IMAGE_RE_ALT = /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:
 const ALICDN_IMAGE_RE = /https?:\/\/[^"'\s]+\.alicdn\.com\/[^"'\s]+\.(?:jpg|jpeg|png|webp)/i
 const ITEM_ID_RE = /\/item\/(\d+)\.html/i
 
+const FETCH_HEADERS = {
+  'User-Agent': USER_AGENT,
+  Accept: 'text/html,application/xhtml+xml',
+  'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+}
+
 function normalizeImageUrl(image) {
   let normalized = image.trim()
   if (normalized.startsWith('//')) {
@@ -30,35 +36,30 @@ function extractImageFromHtml(html) {
   return null
 }
 
-async function resolvePageUrl(pageUrl) {
-  let currentUrl = pageUrl.trim()
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await fetch(currentUrl, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
-      },
-      redirect: 'manual',
-    })
-
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location')
-      if (!location) break
-      currentUrl = new URL(location, currentUrl).toString()
-      continue
+function extractItemId(...urls) {
+  for (const url of urls) {
+    const match = url?.match(ITEM_ID_RE)
+    if (match?.[1]) {
+      return match[1]
     }
+  }
+  return null
+}
 
-    if (!response.ok) {
-      throw new Error(`Page fetch failed (${response.status})`)
-    }
+async function fetchPageHtml(pageUrl) {
+  const response = await fetch(pageUrl.trim(), {
+    headers: FETCH_HEADERS,
+    redirect: 'follow',
+  })
 
-    const html = await response.text()
-    return { html, finalUrl: currentUrl }
+  if (!response.ok) {
+    throw new Error(`Page fetch failed (${response.status})`)
   }
 
-  throw new Error('Too many redirects while resolving product link')
+  return {
+    html: await response.text(),
+    finalUrl: response.url,
+  }
 }
 
 export function isValidHttpUrl(value) {
@@ -73,18 +74,34 @@ export function isValidHttpUrl(value) {
 }
 
 export async function fetchOgImage(pageUrl) {
-  const { html, finalUrl } = await resolvePageUrl(pageUrl)
-  const image = extractImageFromHtml(html)
+  const trimmedUrl = pageUrl.trim()
+  const first = await fetchPageHtml(trimmedUrl)
+  const image = extractImageFromHtml(first.html)
   if (image) {
     return image
   }
 
-  const itemMatch = finalUrl.match(ITEM_ID_RE)
-  if (itemMatch?.[1]) {
-    const canonicalUrl = `https://www.aliexpress.com/item/${itemMatch[1]}.html`
-    if (canonicalUrl !== finalUrl) {
-      const retry = await resolvePageUrl(canonicalUrl)
-      return extractImageFromHtml(retry.html)
+  const itemId = extractItemId(first.finalUrl, trimmedUrl)
+  if (!itemId) {
+    return null
+  }
+
+  const candidates = [
+    `https://he.aliexpress.com/item/${itemId}.html`,
+    `https://www.aliexpress.com/item/${itemId}.html`,
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate === first.finalUrl) continue
+
+    try {
+      const retry = await fetchPageHtml(candidate)
+      const retryImage = extractImageFromHtml(retry.html)
+      if (retryImage) {
+        return retryImage
+      }
+    } catch {
+      // Try the next canonical AliExpress URL.
     }
   }
 

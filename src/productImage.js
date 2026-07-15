@@ -1,3 +1,5 @@
+import { fetchHtmlViaScrapingBee, isBlockedHtml } from './scraperFetch.js'
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
@@ -58,7 +60,7 @@ function extractItemId(...urls) {
   return null
 }
 
-async function fetchPageHtml(pageUrl) {
+async function fetchPageHtmlDirect(pageUrl) {
   const response = await fetch(pageUrl.trim(), {
     headers: FETCH_HEADERS,
     redirect: 'follow',
@@ -74,7 +76,32 @@ async function fetchPageHtml(pageUrl) {
   }
 }
 
-async function resolveItemIdFromRedirect(pageUrl) {
+async function fetchPageHtml(pageUrl) {
+  try {
+    const direct = await fetchPageHtmlDirect(pageUrl)
+    if (!isBlockedHtml(direct.html)) {
+      return direct
+    }
+  } catch {
+    // Try the scraper fallback below.
+  }
+
+  const scrapedHtml = await fetchHtmlViaScrapingBee(pageUrl)
+  if (scrapedHtml) {
+    return {
+      html: scrapedHtml,
+      finalUrl: pageUrl,
+    }
+  }
+
+  try {
+    return await fetchPageHtmlDirect(pageUrl)
+  } catch (error) {
+    throw error
+  }
+}
+
+export async function resolveItemIdFromRedirect(pageUrl) {
   const response = await fetch(pageUrl.trim(), {
     headers: FETCH_HEADERS,
     redirect: 'manual',
@@ -88,6 +115,21 @@ async function resolveItemIdFromRedirect(pageUrl) {
   }
 
   return null
+}
+
+export async function resolveProductLink(pageUrl) {
+  const trimmedUrl = pageUrl.trim()
+  const itemId =
+    extractItemId(trimmedUrl) || (await resolveItemIdFromRedirect(trimmedUrl))
+
+  if (!itemId) {
+    return null
+  }
+
+  return {
+    itemId,
+    productUrl: `https://www.aliexpress.com/item/${itemId}.html`,
+  }
 }
 
 export function isValidHttpUrl(value) {

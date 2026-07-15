@@ -5,6 +5,7 @@ import {
   fetchImageBuffer,
   fetchOgImage,
   isValidHttpUrl,
+  resolveProductLink,
 } from './productImage.js'
 
 function getAllowedOrigins() {
@@ -72,6 +73,25 @@ app.get('/', (_req, res) => {
   })
 })
 
+app.get('/api/resolve-product-link', async (req, res) => {
+  const sourceUrl = req.query.url
+  if (!isValidHttpUrl(sourceUrl)) {
+    res.status(400).json({ error: 'Invalid or missing url' })
+    return
+  }
+
+  try {
+    const resolved = await resolveProductLink(sourceUrl.trim())
+    if (!resolved) {
+      res.status(422).json({ error: 'Could not resolve product link' })
+      return
+    }
+    res.json({ ...resolved, sourceUrl: sourceUrl.trim() })
+  } catch (err) {
+    res.status(502).json({ error: String(err) })
+  }
+})
+
 app.get('/api/product-image', async (req, res) => {
   const sourceUrl = req.query.url
   if (!isValidHttpUrl(sourceUrl)) {
@@ -80,12 +100,25 @@ app.get('/api/product-image', async (req, res) => {
   }
 
   try {
-    const imageUrl = await fetchOgImage(sourceUrl.trim())
+    const trimmedUrl = sourceUrl.trim()
+    const resolved = await resolveProductLink(trimmedUrl)
+    const imageUrl = await fetchOgImage(trimmedUrl)
     if (!imageUrl) {
-      res.status(422).json({ error: 'No product image found for this link' })
+      res.status(422).json({
+        error: process.env.SCRAPINGBEE_API_KEY
+          ? 'No product image found for this link'
+          : 'AliExpress blocked automated fetch. Add SCRAPINGBEE_API_KEY on the backend, use a local backend override, or paste direct alicdn image URLs.',
+        itemId: resolved?.itemId ?? null,
+        productUrl: resolved?.productUrl ?? null,
+      })
       return
     }
-    res.json({ imageUrl, sourceUrl: sourceUrl.trim() })
+    res.json({
+      imageUrl,
+      sourceUrl: trimmedUrl,
+      itemId: resolved?.itemId ?? null,
+      productUrl: resolved?.productUrl ?? null,
+    })
   } catch (err) {
     res.status(502).json({ error: String(err) })
   }

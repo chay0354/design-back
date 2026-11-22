@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
-    "build": "node -e \"console.log('No build step required')\""
+    "build": "node -e \"console.log('No build step required')\"",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -15,6 +16,7 @@
     "@supabase/supabase-js": "^2.49.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4"
   }
 }

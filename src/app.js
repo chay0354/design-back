@@ -7,6 +7,12 @@ import {
   isValidHttpUrl,
   resolveProductLink,
 } from './productImage.js'
+import { HttpError } from './lib/http.js'
+import checkoutRoutes from './routes/checkout.js'
+import voucherRoutes, { shareRouter } from './routes/vouchers.js'
+import trackingRoutes from './routes/tracking.js'
+import adminRoutes from './routes/admin.js'
+import cronRoutes from './routes/cron.js'
 
 function getAllowedOrigins() {
   const origins = new Set([
@@ -65,16 +71,26 @@ app.use(
       }
       callback(null, false)
     },
-    methods: ['GET', 'HEAD', 'OPTIONS'],
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   }),
 )
-app.use(express.json())
+app.use(express.json({ limit: '200kb' }))
 
 app.get('/', (_req, res) => {
   res.json({
     ok: true,
     service: 'design-back',
-    endpoints: ['/api/health', '/api/product-image', '/api/image-proxy'],
+    endpoints: [
+      '/api/health',
+      '/api/product-image',
+      '/api/image-proxy',
+      '/api/checkout/*',
+      '/api/vouchers/*',
+      '/api/referrals/visit',
+      '/api/events',
+      '/api/admin/*',
+    ],
   })
 })
 
@@ -159,11 +175,28 @@ app.get('/api/health', async (_req, res) => {
   }
 })
 
+app.use('/api/checkout', checkoutRoutes)
+app.use('/api/vouchers', voucherRoutes)
+app.use('/api/g', shareRouter)
+app.use('/api', trackingRoutes)
+app.use('/api/admin', adminRoutes)
+app.use('/api/cron', cronRoutes)
+
 app.use((err, req, res, next) => {
   if (res.headersSent) {
     next(err)
     return
   }
+  if (err instanceof HttpError) {
+    const origin = req.headers.origin
+    if (origin && isAllowedOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Vary', 'Origin')
+    }
+    res.status(err.status).json({ error: err.message, details: err.details })
+    return
+  }
+  console.error(err)
   const origin = req.headers.origin
   if (origin && isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin)

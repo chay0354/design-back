@@ -9,7 +9,7 @@
  *   customer gets whichever is larger, the extra-room discount or the coupon.
  */
 
-export const DEFAULT_ROOM_PRICE = 660
+export const DEFAULT_ROOM_PRICE = 540
 export const EXTRA_ROOM_DISCOUNT_PERCENT = 20
 
 const round2 = (value) => Math.round(value * 100) / 100

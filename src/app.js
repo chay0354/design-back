@@ -14,6 +14,7 @@ import trackingRoutes from './routes/tracking.js'
 import adminRoutes from './routes/admin.js'
 import cronRoutes from './routes/cron.js'
 import roomRoutes from './routes/rooms.js'
+import authRoutes from './routes/auth.js'
 
 function getAllowedOrigins() {
   const origins = new Set([
@@ -179,6 +180,7 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api/checkout', checkoutRoutes)
 app.use('/api/vouchers', voucherRoutes)
 app.use('/api/rooms', roomRoutes)
+app.use('/api/auth', authRoutes)
 app.use('/api/g', shareRouter)
 app.use('/api', trackingRoutes)
 app.use('/api/admin', adminRoutes)

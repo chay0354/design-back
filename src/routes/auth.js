@@ -4,15 +4,64 @@ import { HttpError, requireString, route } from '../lib/http.js'
 
 const router = Router()
 
+function normalizeEmail(value) {
+  return requireString(value, 'email', { max: 200 }).trim().toLowerCase()
+}
+
+async function ensureProfile(admin, userId, email) {
+  const existing = unwrap(await admin.from('petite_profiles').select('id').eq('id', userId).maybeSingle())
+  if (existing) return
+  unwrap(
+    await admin.from('petite_profiles').insert({
+      id: userId,
+      email,
+      name: email.split('@')[0] || '',
+    }),
+  )
+}
+
 /**
- * Confirms a just-created account when Supabase Auth requires email verification
- * but confirmation mail is not configured / not arriving.
- * Safe: knowing userId+email alone still needs the password to sign in.
+ * Creates the account on the server and marks the email as confirmed.
+ * Avoids Supabase's confirmation-email rate limit, which was blocking signups.
+ */
+router.post(
+  '/signup',
+  route(async (req, res) => {
+    const email = normalizeEmail(req.body?.email)
+    const password = requireString(req.body?.password, 'password', { max: 200 })
+    if (password.length < 6) throw new HttpError(400, 'הסיסמה חייבת להכיל לפחות 6 תווים')
+
+    const admin = getAdmin()
+    const created = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    })
+
+    if (created.error) {
+      const message = (created.error.message || '').toLowerCase()
+      if (message.includes('already') || message.includes('registered') || created.error.status === 422) {
+        throw new HttpError(409, 'כתובת האימייל כבר רשומה — נסי להתחבר')
+      }
+      throw created.error
+    }
+
+    const user = created.data?.user
+    if (!user?.id) throw new HttpError(500, 'לא הצלחנו ליצור את החשבון')
+
+    await ensureProfile(admin, user.id, email)
+    res.status(201).json({ ok: true, userId: user.id })
+  }),
+)
+
+/**
+ * Confirms a just-created Auth user when the browser signup path was used
+ * and confirmation mail never arrived.
  */
 router.post(
   '/confirm-signup',
   route(async (req, res) => {
-    const email = requireString(req.body?.email, 'email', { max: 200 }).trim().toLowerCase()
+    const email = normalizeEmail(req.body?.email)
     const userId = requireString(req.body?.userId, 'userId', { max: 60 })
 
     const admin = getAdmin()
@@ -29,19 +78,7 @@ router.post(
       if (updated.error) throw updated.error
     }
 
-    const existing = unwrap(
-      await admin.from('petite_profiles').select('id').eq('id', userId).maybeSingle(),
-    )
-    if (!existing) {
-      unwrap(
-        await admin.from('petite_profiles').insert({
-          id: userId,
-          email,
-          name: email.split('@')[0] || '',
-        }),
-      )
-    }
-
+    await ensureProfile(admin, userId, email)
     res.json({ ok: true })
   }),
 )

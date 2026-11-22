@@ -460,6 +460,7 @@ router.get(
       roomPrice: await getSetting('room_price'),
       giftVoucherPrices: await getSetting('gift_voucher_prices'),
       giftVoucherEmail: await getSetting('gift_voucher_email'),
+      guideVideos: await getSetting('guide_videos'),
       defaults: DEFAULT_SETTINGS,
       emailConfigured: emailConfigured(),
       paymentProvider: (process.env.PAYMENT_PROVIDER || 'demo').toLowerCase(),
@@ -490,6 +491,21 @@ router.put(
           DEFAULT_SETTINGS.gift_voucher_email[key]
       }
       await setSetting('gift_voucher_email', template)
+    }
+    if (body.guideVideos !== undefined) {
+      if (!Array.isArray(body.guideVideos) || body.guideVideos.length > 12) throw new HttpError(400, 'Invalid guideVideos')
+      const videos = body.guideVideos.map((video, index) => {
+        const videoUrl = requireString(video?.videoUrl, 'videoUrl', { max: 500, optional: true })
+        if (videoUrl && !/^https:\/\//i.test(videoUrl)) throw new HttpError(400, 'קישור וידאו חייב להתחיל ב-https://')
+        return {
+          id: requireString(video?.id, 'id', { max: 40, optional: true }) || `lesson-${index + 1}`,
+          title: requireString(video?.title, 'title', { max: 120 }),
+          description: requireString(video?.description, 'description', { max: 400, optional: true }),
+          image: requireString(video?.image, 'image', { max: 500, optional: true }),
+          videoUrl,
+        }
+      })
+      await setSetting('guide_videos', videos)
     }
     res.json({ ok: true })
   }),

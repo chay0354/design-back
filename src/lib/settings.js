@@ -18,13 +18,15 @@ export const DEFAULT_SETTINGS = {
     Array.from({ length: MAX_VOUCHER_PACKAGES }, (_, i) => [String(i + 1), defaultVoucherPrice(i + 1)]),
   ),
   gift_voucher_email: DEFAULT_VOUCHER_EMAIL,
+  // Masterclass lessons in the personal area: [{ id, title, description, image, videoUrl }]
+  guide_videos: [],
 }
 
 export async function getSetting(key) {
   const { data, error } = await getAdmin().from('app_settings').select('value').eq('key', key).maybeSingle()
   if (error) throw error
   if (data?.value === undefined || data?.value === null) return DEFAULT_SETTINGS[key]
-  if (typeof DEFAULT_SETTINGS[key] === 'object' && !Array.isArray(DEFAULT_SETTINGS[key])) {
+  if (DEFAULT_SETTINGS[key] && typeof DEFAULT_SETTINGS[key] === 'object' && !Array.isArray(DEFAULT_SETTINGS[key])) {
     return { ...DEFAULT_SETTINGS[key], ...data.value }
   }
   return data.value

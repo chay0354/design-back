@@ -134,14 +134,14 @@ async function upsertRoom(userId, room) {
   }
   if (room.roomId) {
     const existing = unwrap(
-      await db.from('rooms').select('id').eq('id', room.roomId).eq('user_id', userId).maybeSingle(),
+      await db.from('petite_rooms').select('id').eq('id', room.roomId).eq('user_id', userId).maybeSingle(),
     )
     if (existing) {
-      unwrap(await db.from('rooms').update(fields).eq('id', room.roomId))
+      unwrap(await db.from('petite_rooms').update(fields).eq('id', room.roomId))
       return { id: room.roomId, existed: true }
     }
   }
-  const created = unwrap(await db.from('rooms').insert({ user_id: userId, ...fields }).select('id').single())
+  const created = unwrap(await db.from('petite_rooms').insert({ user_id: userId, ...fields }).select('id').single())
   return { id: created.id, existed: false }
 }
 

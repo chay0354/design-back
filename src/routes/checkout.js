@@ -48,6 +48,8 @@ function cleanRoom(room, index) {
     colorPreference: requireString(room.colorPreference, 'colorPreference', { max: 120, optional: true }),
     wallDesignOption: requireString(room.wallDesignOption, 'wallDesignOption', { max: 40, optional: true }),
     displayName: requireString(room.displayName, 'displayName', { max: 200, optional: true }),
+    // Used only when the package is not in app_packages (static default variant).
+    packageSnapshot: room.packageSnapshot && typeof room.packageSnapshot === 'object' ? room.packageSnapshot : null,
     designAge: Number.isFinite(Number(room.designAge)) ? Number(room.designAge) : children[0].age,
   }
 }
@@ -110,6 +112,14 @@ router.post(
     res.json(quoteResponse(result))
   }),
 )
+
+/** The package as customers saw it when buying — the published version wins over the browser copy. */
+async function packageSnapshots(rooms) {
+  const ids = [...new Set(rooms.map((room) => room.packageId))]
+  const rows = unwrap(await getAdmin().from('app_packages').select('id, data').in('id', ids))
+  const published = new Map(rows.map((row) => [row.id, row.data]))
+  return rooms.map((room) => published.get(room.packageId) || room.packageSnapshot || null)
+}
 
 async function upsertRoom(userId, room) {
   const db = getAdmin()
@@ -284,6 +294,7 @@ router.post(
       )
     }
 
+    const snapshots = await packageSnapshots(rooms)
     const items = []
     const profileEntries = []
     for (let index = 0; index < rooms.length; index += 1) {
@@ -317,6 +328,7 @@ router.post(
             color_preference: room.colorPreference,
             wall_design_option: room.wallDesignOption,
             children: room.children,
+            package_snapshot: snapshots[index],
             list_price: line.listPrice,
             discount_type: line.discountType,
             discount_amount: line.discountAmount,

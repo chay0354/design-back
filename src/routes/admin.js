@@ -5,7 +5,7 @@ import { HttpError, isEmail, optionalNumber, parseDateRange, requireString, rout
 import { normalizeCode, slugify, randomCode } from '../lib/codes.js'
 import { toCsv, sendCsv } from '../lib/csv.js'
 import { DEFAULT_SETTINGS, MAX_VOUCHER_PACKAGES, getSetting, setSetting } from '../lib/settings.js'
-import { emailConfigured, siteUrl } from '../lib/email.js'
+import { emailConfigured, layout, siteUrl, voucherCardHtml } from '../lib/email.js'
 import { computeStats } from '../lib/stats.js'
 import { revertVoucher } from './checkout.js'
 import { buyerView, deliverVoucher } from './vouchers.js'
@@ -426,6 +426,21 @@ router.post(
   }),
 )
 
+/** The designed voucher as a standalone printable page (open, then print or save as PDF). */
+router.get(
+  '/vouchers/:id/download',
+  route(async (req, res) => {
+    const voucher = unwrap(await getAdmin().from('gift_vouchers').select('*').eq('id', req.params.id).single())
+    const html = layout(
+      `${voucherCardHtml(voucher)}<p style="text-align:center;font-size:12px;color:#8A847C;margin-top:16px;">ניתן להדפיס או לשמור כ־PDF מהדפדפן</p>`,
+      { preheader: `שובר מתנה ${voucher.code}` },
+    )
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="voucher-${voucher.code}.html"`)
+    res.send(html)
+  }),
+)
+
 router.post(
   '/vouchers/:id/cancel',
   route(async (req, res) => {
@@ -461,6 +476,7 @@ router.get(
       giftVoucherPrices: await getSetting('gift_voucher_prices'),
       giftVoucherEmail: await getSetting('gift_voucher_email'),
       guideVideos: await getSetting('guide_videos'),
+      applicationGuides: await getSetting('application_guides'),
       defaults: DEFAULT_SETTINGS,
       emailConfigured: emailConfigured(),
       paymentProvider: (process.env.PAYMENT_PROVIDER || 'demo').toLowerCase(),
@@ -506,6 +522,19 @@ router.put(
         }
       })
       await setSetting('guide_videos', videos)
+    }
+    if (body.applicationGuides !== undefined) {
+      if (!Array.isArray(body.applicationGuides) || body.applicationGuides.length > 12) {
+        throw new HttpError(400, 'Invalid applicationGuides')
+      }
+      const guides = body.applicationGuides.map((guide, index) => ({
+        id: (requireString(guide?.id, 'id', { max: 40, optional: true }) || `guide-${index + 1}`).replace(/[^a-z0-9-]/gi, ''),
+        title: requireString(guide?.title, 'title', { max: 120 }),
+        subtitle: requireString(guide?.subtitle, 'subtitle', { max: 200, optional: true }),
+        summary: requireString(guide?.summary, 'summary', { max: 400, optional: true }),
+        body: requireString(guide?.body, 'body', { max: 20000, optional: true }),
+      }))
+      await setSetting('application_guides', guides)
     }
     res.json({ ok: true })
   }),

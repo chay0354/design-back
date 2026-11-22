@@ -20,6 +20,8 @@ export const DEFAULT_SETTINGS = {
   gift_voucher_email: DEFAULT_VOUCHER_EMAIL,
   // Masterclass lessons in the personal area: [{ id, title, description, image, videoUrl }]
   guide_videos: [],
+  // Application guides in the personal area toolbox: [{ id, title, subtitle, summary, body }]
+  application_guides: [],
 }
 
 export async function getSetting(key) {

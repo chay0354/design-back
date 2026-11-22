@@ -15,6 +15,22 @@ test('extra rooms get 20% off', () => {
   assert.equal(q.total, 1716)
 })
 
+test('a new design for a room the customer already owns gets 20% off, even as the only room', () => {
+  const single = quoteOrder({ roomCount: 1, roomPrice: 660, upgradeIndexes: [0] })
+  assert.equal(single.total, 528)
+  assert.equal(single.lines[0].discountType, 'upgrade')
+
+  const mixed = quoteOrder({ roomCount: 2, roomPrice: 660, upgradeIndexes: [1] })
+  assert.deepEqual(mixed.lines.map((l) => l.price), [660, 528])
+  assert.deepEqual(mixed.lines.map((l) => l.discountType), ['', 'upgrade'])
+})
+
+test('upgrade discount does not stack with a coupon', () => {
+  const q = quoteOrder({ roomCount: 1, roomPrice: 660, upgradeIndexes: [0], couponPercent: 30 })
+  assert.equal(q.total, 462)
+  assert.equal(q.lines[0].discountType, 'coupon')
+})
+
 test('coupon never stacks with the extra-room discount — best one wins', () => {
   const small = quoteOrder({ roomCount: 2, roomPrice: 660, couponPercent: 15 })
   assert.deepEqual(small.lines.map((l) => l.price), [561, 528])

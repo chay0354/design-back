@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireUser } from '../lib/auth.js'
+import { optionalUser, requireUser } from '../lib/auth.js'
 import { getAdmin, unwrap } from '../lib/supabaseAdmin.js'
 import { HttpError, requireString, route } from '../lib/http.js'
 import { commissionFor, quoteOrder } from '../lib/pricing.js'
@@ -18,6 +18,7 @@ import {
 
 const router = Router()
 const MAX_ROOMS = 10
+const UUID = /^[0-9a-f-]{36}$/i
 const GENDERS = new Set(['boy', 'girl', 'unisex'])
 const AGE_GROUPS = new Set(['0-2', '3-5', '6-10'])
 
@@ -34,7 +35,7 @@ function cleanRoom(room, index) {
   if (!room || typeof room !== 'object') throw new HttpError(400, `Invalid room ${index + 1}`)
   const children = Array.isArray(room.children) ? room.children.slice(0, 6).map(cleanChild) : []
   if (children.length === 0) throw new HttpError(400, `Room ${index + 1} has no children`)
-  const roomId = typeof room.roomId === 'string' && /^[0-9a-f-]{36}$/i.test(room.roomId) ? room.roomId : null
+  const roomId = typeof room.roomId === 'string' && UUID.test(room.roomId) ? room.roomId : null
   return {
     roomId,
     children,
@@ -54,7 +55,16 @@ function cleanRoom(room, index) {
   }
 }
 
-async function buildQuote({ roomCount, couponCode, voucherCode }) {
+/** Indexes of the rooms that already belong to this customer — a new design for them is an upgrade. */
+async function ownedRoomIndexes(userId, roomIds) {
+  const ids = roomIds.filter((id) => typeof id === 'string' && UUID.test(id))
+  if (!userId || ids.length === 0) return []
+  const rows = unwrap(await getAdmin().from('petite_rooms').select('id').eq('user_id', userId).in('id', ids))
+  const owned = new Set(rows.map((row) => row.id))
+  return roomIds.flatMap((id, index) => (owned.has(id) ? [index] : []))
+}
+
+async function buildQuote({ roomCount, couponCode, voucherCode, upgradeIndexes = [] }) {
   const roomPrice = await getRoomPrice()
   let coupon = null
   let couponError = null
@@ -81,6 +91,7 @@ async function buildQuote({ roomCount, couponCode, voucherCode }) {
     roomPrice,
     couponPercent: coupon ? Number(coupon.discount_percent) : 0,
     voucherPackages: voucherRemaining,
+    upgradeIndexes,
   })
 
   return { quote, coupon, couponError, voucher, voucherRemaining, voucherError, roomPrice }
@@ -99,15 +110,18 @@ function quoteResponse({ quote, coupon, couponError, voucher, voucherRemaining, 
   }
 }
 
-/** Price preview for the cart: room count + optional coupon / voucher codes. */
+/** Price preview for the cart: room count + optional coupon / voucher codes and the rooms being redesigned. */
 router.post(
   '/quote',
+  optionalUser,
   route(async (req, res) => {
     const roomCount = Math.min(MAX_ROOMS, Math.max(1, Number.parseInt(req.body?.roomCount, 10) || 1))
+    const roomIds = Array.isArray(req.body?.roomIds) ? req.body.roomIds.slice(0, roomCount) : []
     const result = await buildQuote({
       roomCount,
       couponCode: req.body?.couponCode,
       voucherCode: req.body?.voucherCode,
+      upgradeIndexes: await ownedRoomIndexes(req.user?.id, roomIds),
     })
     res.json(quoteResponse(result))
   }),
@@ -222,6 +236,10 @@ router.post(
       roomCount: rooms.length,
       couponCode: req.body?.couponCode,
       voucherCode: req.body?.voucherCode,
+      upgradeIndexes: await ownedRoomIndexes(
+        user.id,
+        rooms.map((room) => room.roomId),
+      ),
     })
     if (quoteResult.couponError) throw new HttpError(409, quoteResult.couponError.message, quoteResult.couponError)
     if (quoteResult.voucherError) throw new HttpError(409, quoteResult.voucherError.message, quoteResult.voucherError)

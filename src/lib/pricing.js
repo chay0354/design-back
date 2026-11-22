@@ -4,6 +4,7 @@
  *
  * Rules:
  * - First room: full room price. Every additional room in the same order: 20% off.
+ * - A new design for a room the customer already owns ("upgrade"): 20% off too.
  * - A gift voucher pays for whole packages, starting with the most expensive rooms.
  * - A coupon is never added on top of another discount: on each paid room the
  *   customer gets whichever is larger, the extra-room discount or the coupon.
@@ -24,14 +25,23 @@ export function listPriceForRoom(roomPrice, roomIndex) {
  * @param {number} [input.roomPrice]
  * @param {number} [input.couponPercent]  0 when no coupon
  * @param {number} [input.voucherPackages] packages still available on the voucher
+ * @param {number[]} [input.upgradeIndexes] rooms that replace a package the customer already owns
  */
-export function quoteOrder({ roomCount, roomPrice = DEFAULT_ROOM_PRICE, couponPercent = 0, voucherPackages = 0 }) {
+export function quoteOrder({
+  roomCount,
+  roomPrice = DEFAULT_ROOM_PRICE,
+  couponPercent = 0,
+  voucherPackages = 0,
+  upgradeIndexes = [],
+}) {
   if (!Number.isInteger(roomCount) || roomCount < 1) throw new Error('roomCount must be a positive integer')
+  const upgrades = new Set(upgradeIndexes)
 
   const items = Array.from({ length: roomCount }, (_, index) => {
     const fullPrice = roomPrice
-    const extraRoomPrice = listPriceForRoom(roomPrice, index)
-    return { index, fullPrice, extraRoomPrice }
+    const upgrade = upgrades.has(index)
+    const extraRoomPrice = listPriceForRoom(roomPrice, upgrade ? Math.max(1, index) : index)
+    return { index, fullPrice, extraRoomPrice, upgrade }
   })
 
   // Vouchers cover whole packages; give the customer the most valuable rooms first.
@@ -56,7 +66,8 @@ export function quoteOrder({ roomCount, roomPrice = DEFAULT_ROOM_PRICE, couponPe
     const best = Math.min(couponPrice, item.extraRoomPrice)
     let discountType = ''
     if (best < item.fullPrice) {
-      discountType = couponPercent > 0 && couponPrice <= item.extraRoomPrice ? 'coupon' : 'sibling'
+      if (couponPercent > 0 && couponPrice <= item.extraRoomPrice) discountType = 'coupon'
+      else discountType = item.upgrade ? 'upgrade' : 'sibling'
     }
     return {
       index: item.index,

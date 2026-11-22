@@ -98,6 +98,26 @@ export function packagesPhrase(count) {
   return count === 1 ? 'חבילת עיצוב אחת' : `${count} חבילות עיצוב`
 }
 
+export function isPluralRecipients(names) {
+  const n = String(names || '').trim()
+  if (!n) return true
+  if (/משפח|כולם|הילדים|הנכדים/.test(n)) return true
+  if (/[,،/&+]/.test(n)) return true
+  if (/\S\s+ו\S/.test(n) || /\S\s+ו\s+\S/.test(n)) return true
+  return false
+}
+
+export function toRecipientLabel(names) {
+  const n = String(names || '').trim()
+  if (!n) return 'למקבלי המתנה'
+  return `ל${n}`
+}
+
+export function receivedPackagesLine(names, count) {
+  const verb = isPluralRecipients(names) ? 'קיבלתם' : 'קיבלת'
+  return `${verb} ${packagesPhrase(count)} לחדרי הילדים`
+}
+
 /** The designed voucher card used in emails (and mirrored on the site). No price, ever. */
 export function voucherCardHtml(voucher) {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E7D9C8;border-radius:14px;background:#FBF8F3;">
@@ -105,9 +125,9 @@ export function voucherCardHtml(voucher) {
 <img src="${siteUrl()}/assets/logo-full.png" alt="Petite Dreams" width="120" style="max-width:120px;height:auto;">
 <p style="margin:12px 0 0;font-size:26px;color:#3C3834;">שובר מתנה</p>
 <p style="margin:4px 0 14px;font-size:14px;color:#8A847C;">מתנה קטנה, חלומות גדולים</p>
-<p style="margin:0;font-size:17px;">${escapeHtml(voucher.recipient_names)}</p>
-${voucher.personal_message ? `<p style="margin:10px 0 0;font-size:14px;color:#5E5852;">${nl2br(voucher.personal_message)}</p>` : ''}
-<p style="margin:14px 0 0;font-size:15px;">${packagesPhrase(voucher.packages_count)} לחדרי הילדים</p>
+<p style="margin:0;font-size:17px;">${escapeHtml(toRecipientLabel(voucher.recipient_names))}</p>
+<p style="margin:10px 0 0;font-size:14px;color:#5E5852;">${nl2br(String(voucher.personal_message || '').trim() || 'כי לכל ילד מגיע מקום משלו לחלום, לדמיין ולגדול בו.')}</p>
+<p style="margin:14px 0 0;font-size:15px;">${receivedPackagesLine(voucher.recipient_names, voucher.packages_count)}</p>
 ${voucher.giver_name ? `<p style="margin:6px 0 0;font-size:14px;color:#5E5852;">מאת: ${escapeHtml(voucher.giver_name)}</p>` : ''}
 <p style="margin:16px 0 4px;font-size:13px;color:#8A847C;">קוד השובר</p>
 <p dir="ltr" style="margin:0;font-size:22px;letter-spacing:2px;color:#3C3834;">${escapeHtml(voucher.code)}</p>
@@ -123,7 +143,7 @@ export function voucherRecipientEmail(voucher, template) {
 <p style="font-size:20px;margin:0 0 12px;">${escapeHtml(template.intro)}</p>
 <p style="margin:0 0 12px;">${escapeHtml(voucher.recipient_names)} היקרים,</p>
 <p style="margin:0 0 12px;">${fromLine}</p>
-<p style="margin:0 0 12px;"><strong>${packagesPhrase(voucher.packages_count)} לחדרי הילדים מבית Petite Dreams.</strong></p>
+<p style="margin:0 0 12px;"><strong>${receivedPackagesLine(voucher.recipient_names, voucher.packages_count)} מבית Petite Dreams.</strong></p>
 <p style="margin:0 0 18px;">${nl2br(template.body)}</p>
 ${voucherCardHtml(voucher)}
 ${button(voucherRedeemUrl(voucher.code), 'למימוש המתנה שלכם')}
@@ -133,7 +153,7 @@ ${button(voucherRedeemUrl(voucher.code), 'למימוש המתנה שלכם')}
   return {
     subject: template.subject,
     html: layout(inner, { preheader: template.intro }),
-    text: `${template.intro}\n\n${voucher.recipient_names} היקרים,\n${packagesPhrase(voucher.packages_count)} לחדרי הילדים מבית Petite Dreams.\n\nלמימוש: ${voucherRedeemUrl(voucher.code)}\nקוד השובר: ${voucher.code}\n\n${blessing}\n${voucher.giver_name || ''}`,
+    text: `${template.intro}\n\n${voucher.recipient_names} היקרים,\n${receivedPackagesLine(voucher.recipient_names, voucher.packages_count)} מבית Petite Dreams.\n\nלמימוש: ${voucherRedeemUrl(voucher.code)}\nקוד השובר: ${voucher.code}\n\n${blessing}\n${voucher.giver_name || ''}`,
   }
 }
 

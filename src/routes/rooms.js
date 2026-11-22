@@ -5,6 +5,56 @@ import { HttpError, requireString, route } from '../lib/http.js'
 
 const router = Router()
 
+function cleanAllocationChild(raw, index) {
+  const name = String(raw?.name || '').trim()
+  if (!name) throw new HttpError(400, `חסר שם לילד מספר ${index + 1}`)
+  const age = Number.parseInt(raw?.age, 10)
+  if (!Number.isInteger(age) || age < 0 || age > 18) throw new HttpError(400, `גיל לא תקין עבור ${name}`)
+  const gender = raw?.gender === 'girl' || raw?.gender === 'boy' ? raw.gender : ''
+  return { name: name.slice(0, 80), age, gender }
+}
+
+/**
+ * Updates ages / children / room grouping for the buyer's active rooms
+ * before they choose a new design package.
+ */
+router.post(
+  '/allocation',
+  requireUser,
+  route(async (req, res) => {
+    const db = getAdmin()
+    const userId = req.user.id
+    const rooms = Array.isArray(req.body?.rooms) ? req.body.rooms : null
+    if (!rooms || rooms.length === 0) throw new HttpError(400, 'לא התקבלה חלוקת חדרים')
+
+    const profile = unwrap(await db.from('petite_profiles').select('children').eq('id', userId).single())
+    const children = Array.isArray(profile.children) ? [...profile.children] : []
+    const now = new Date().toISOString()
+
+    for (const room of rooms) {
+      const roomChildren = (Array.isArray(room.children) ? room.children : []).map(cleanAllocationChild)
+      if (roomChildren.length === 0) continue
+
+      const roomId = room.roomId ? String(room.roomId) : null
+      const orderItemId = room.orderItemId ? String(room.orderItemId) : null
+      let target = null
+      if (roomId) target = children.find((child) => child.roomId === roomId && !child.archivedAt)
+      if (!target && orderItemId) {
+        target = children.find((child) => child.orderItemId === orderItemId && !child.archivedAt)
+      }
+      if (!target) continue
+
+      target.roomChildren = roomChildren
+      target.name = roomChildren.map((child) => child.name).join(' ו')
+      target.age = roomChildren[0].age
+      target.gender = roomChildren[0].gender || target.gender
+    }
+
+    unwrap(await db.from('petite_profiles').update({ children, updated_at: now }).eq('id', userId))
+    res.json({ ok: true })
+  }),
+)
+
 /**
  * Brings an archived package back as the room's current package.
  * The package that was current moves to the archive, so nothing is ever lost.

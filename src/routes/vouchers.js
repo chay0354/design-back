@@ -7,8 +7,9 @@ import { newVoucherCode, normalizeCode } from '../lib/codes.js'
 import { charge } from '../lib/payments.js'
 import { MAX_VOUCHER_PACKAGES, getSetting, getVoucherPrice } from '../lib/settings.js'
 import {
+  emailConfigured,
   escapeHtml,
-  packagesPhrase,
+  receivedPackagesLine,
   sendEmail,
   siteUrl,
   voucherBuyerEmail,
@@ -27,7 +28,7 @@ export function whatsappText(voucher) {
     '',
     voucher.giver_name ? `מחכה לכם מתנה מיוחדת מ${voucher.giver_name}! ♡` : 'מחכה לכם מתנה מיוחדת! ♡',
     '',
-    `${packagesPhrase(voucher.packages_count)} לחדרי הילדים מבית Petite Dreams.`,
+    `${receivedPackagesLine(voucher.recipient_names, voucher.packages_count)} מבית Petite Dreams.`,
     'מקום קטן לחלומות גדולים, לדמיון ולזיכרונות יפים. ✨',
     '',
   ]
@@ -65,19 +66,23 @@ export function buyerView(voucher) {
 export async function deliverVoucher(voucher, { orderNumber, total, resend = false }) {
   const template = await getSetting('gift_voucher_email')
   const results = {}
+  const configured = emailConfigured()
 
-  if (voucher.delivery_method === 'email' && voucher.recipient_email) {
+  // Gift email whenever a recipient address was provided (required for email delivery; optional for WhatsApp/self).
+  if (voucher.recipient_email && isEmail(voucher.recipient_email)) {
     results.recipient = await sendEmail({ to: voucher.recipient_email, ...voucherRecipientEmail(voucher, template) })
   }
+
   if (!resend && voucher.buyer_email) {
     results.buyer = await sendEmail({ to: voucher.buyer_email, ...voucherBuyerEmail(voucher, { orderNumber, total }) })
-  }
-  if (resend && voucher.delivery_method !== 'email' && voucher.buyer_email) {
+  } else if (resend && voucher.buyer_email) {
+    // On resend, buyer gets the shareable gift email (useful when WhatsApp/self was chosen).
     results.buyer = await sendEmail({ to: voucher.buyer_email, ...voucherRecipientEmail(voucher, template) })
   }
 
-  const delivered = Object.values(results).some((r) => r?.sent)
-  if (delivered || voucher.delivery_method === 'whatsapp') {
+  const emailed = Object.values(results).some((r) => r?.sent)
+  // WhatsApp/self can complete without email; pure email delivery stays pending until a send succeeds.
+  if (emailed || voucher.delivery_method === 'whatsapp' || voucher.delivery_method === 'self') {
     const status = voucher.status === 'pending_send' ? 'sent' : voucher.status
     unwrap(
       await getAdmin()
@@ -87,7 +92,13 @@ export async function deliverVoucher(voucher, { orderNumber, total, resend = fal
     )
     voucher.status = status
   }
-  return results
+  return {
+    ...results,
+    emailConfigured: configured,
+    emailed,
+    recipientEmailed: Boolean(results.recipient?.sent),
+    buyerEmailed: Boolean(results.buyer?.sent),
+  }
 }
 
 router.get(
@@ -176,7 +187,7 @@ router.post(
       delivery = await deliverVoucher(voucher, { orderNumber: order.order_number, total: price })
     } catch (err) {
       console.error('[vouchers] delivery failed', err)
-      delivery = { error: 'email_failed' }
+      delivery = { error: 'email_failed', emailed: false, emailConfigured: emailConfigured() }
     }
 
     res.status(201).json({ voucher: buyerView(voucher), orderNumber: order.order_number, delivery })
@@ -198,6 +209,36 @@ router.get(
     )
     if (!voucher) throw new HttpError(404, 'Voucher not found')
     res.json({ voucher: buyerView(voucher) })
+  }),
+)
+
+/** Buyer can retry sending the gift email (e.g. after RESEND was configured). */
+router.post(
+  '/purchased/:id/resend-email',
+  requireUser,
+  route(async (req, res) => {
+    if (!emailConfigured()) {
+      throw new HttpError(503, 'שליחת מיילים עדיין לא הוגדרה בשרת. פנו לתמיכה.')
+    }
+    const voucher = unwrap(
+      await getAdmin()
+        .from('gift_vouchers')
+        .select('*')
+        .eq('id', req.params.id)
+        .eq('buyer_user_id', req.user.id)
+        .maybeSingle(),
+    )
+    if (!voucher) throw new HttpError(404, 'Voucher not found')
+    if (voucher.status === 'cancelled') throw new HttpError(409, 'השובר בוטל')
+    const delivery = await deliverVoucher(voucher, {
+      resend: true,
+      orderNumber: voucher.code,
+      total: voucher.price_paid,
+    })
+    if (!delivery.emailed) {
+      throw new HttpError(502, 'שליחת המייל נכשלה. נסי שוב בעוד רגע.')
+    }
+    res.json({ delivery, voucher: buyerView(voucher) })
   }),
 )
 

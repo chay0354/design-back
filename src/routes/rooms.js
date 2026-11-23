@@ -105,6 +105,7 @@ router.get(
     const db = getAdmin()
     const packageId = requireString(req.query.packageId, 'packageId', { max: 120 })
     const roomKey = requireString(req.query.roomKey, 'roomKey', { max: 120, optional: true })
+    const since = requireString(req.query.since, 'since', { max: 40, optional: true })
     let query = db
       .from('room_visualizations')
       .select('id, image_path, created_at')
@@ -114,6 +115,7 @@ router.get(
       .order('created_at', { ascending: false })
       .limit(1)
     if (roomKey) query = query.eq('room_key', roomKey)
+    if (since) query = query.gt('created_at', since)
     const [latest] = unwrap(await query)
     if (!latest?.image_path) {
       res.json({ visualization: null })

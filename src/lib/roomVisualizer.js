@@ -213,8 +213,13 @@ export async function generateRoomVisualization({ packageImage, roomImage }) {
           role: 'user',
           parts: [
             { text: ROOM_DRESSING_PROMPT },
+            { text: 'תמונה 1 – הדמיית חבילת העיצוב:' },
             { inlineData: packageImage },
+            { text: 'תמונה 2 – צילום החדר הקיים:' },
             { inlineData: roomImage },
+            {
+              text: 'הסדר כאן קבוע. תמונה 2 היא החדר שצולם ואותו חובה לשמור: אותו חלון, אותם קירות, אותן דלתות, אותו ארון ואותה מיטה. אסור להחליף את תמונה 2 בתמונה 1 או לייצר חדר חדש שנראה כמו תמונה 1. הלבישי רק את פריטי תמונה 1 על החדר שבתמונה 2.',
+            },
           ],
         },
       ],

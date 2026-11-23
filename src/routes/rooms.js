@@ -2,8 +2,132 @@ import { Router } from 'express'
 import { requireUser } from '../lib/auth.js'
 import { getAdmin, unwrap } from '../lib/supabaseAdmin.js'
 import { HttpError, requireString, route } from '../lib/http.js'
+import { isAllowedOrigin } from '../lib/origins.js'
+import {
+  fetchPackageImage,
+  generateRoomVisualization,
+  parseImageDataUrl,
+  resolvePackageImageUrl,
+} from '../lib/roomVisualizer.js'
 
 const router = Router()
+
+const VISUALIZATION_BUCKET = 'room-visualizations'
+const SIGNED_URL_SECONDS = 60 * 60 * 24 * 7
+
+function dailyVisualizationLimit() {
+  const limit = Number.parseInt(process.env.VISUALIZE_DAILY_LIMIT || '', 10)
+  return Number.isInteger(limit) && limit > 0 ? limit : 5
+}
+
+async function signedVisualizationUrl(db, path) {
+  const { data, error } = await db.storage.from(VISUALIZATION_BUCKET).createSignedUrl(path, SIGNED_URL_SECONDS)
+  if (error) throw error
+  return data.signedUrl
+}
+
+/**
+ * Dresses the purchased package onto a photo of the buyer's own room (Gemini image model).
+ * Body: { packageId, packageImageUrl, roomKey?, image: data:image/jpeg;base64,... }
+ */
+router.post(
+  '/visualize',
+  requireUser,
+  route(async (req, res) => {
+    const db = getAdmin()
+    const user = req.user
+    const packageId = requireString(req.body?.packageId, 'packageId', { max: 120 })
+    const roomKey = requireString(req.body?.roomKey, 'roomKey', { max: 120, optional: true })
+    const roomImage = parseImageDataUrl(req.body?.image)
+
+    if (!user.isAdmin) {
+      const purchases = unwrap(await db.from('order_items').select('id').eq('user_id', user.id).limit(1))
+      if (purchases.length === 0) throw new HttpError(403, 'ההדמיה זמינה לאחר רכישת חבילת עיצוב')
+
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+      const { count, error } = await db
+        .from('room_visualizations')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .neq('status', 'failed')
+        .gte('created_at', since)
+      if (error) throw error
+      if ((count ?? 0) >= dailyVisualizationLimit()) {
+        throw new HttpError(429, 'הגעתם למספר ההדמיות היומי. אפשר לנסות שוב מחר')
+      }
+    }
+
+    const origin = req.headers.origin
+    const siteOrigin =
+      origin && isAllowedOrigin(origin) ? origin : (process.env.FRONTEND_URL || 'https://petite-dreams.com').replace(/\/$/, '')
+    const packageImageUrl = resolvePackageImageUrl(req.body?.packageImageUrl, { siteOrigin, isAllowedOrigin })
+
+    const record = unwrap(
+      await db
+        .from('room_visualizations')
+        .insert({ user_id: user.id, package_id: packageId, room_key: roomKey })
+        .select('id')
+        .single(),
+    )
+
+    try {
+      const packageImage = await fetchPackageImage(packageImageUrl)
+      const result = await generateRoomVisualization({ packageImage, roomImage })
+      const extension = result.mimeType === 'image/jpeg' ? 'jpg' : result.mimeType === 'image/webp' ? 'webp' : 'png'
+      const path = `${user.id}/${record.id}.${extension}`
+      const { error: uploadError } = await db.storage
+        .from(VISUALIZATION_BUCKET)
+        .upload(path, result.buffer, { contentType: result.mimeType, upsert: true })
+      if (uploadError) throw uploadError
+
+      unwrap(
+        await db
+          .from('room_visualizations')
+          .update({ status: 'done', image_path: path, model: result.model })
+          .eq('id', record.id),
+      )
+      res.json({ id: record.id, imageUrl: await signedVisualizationUrl(db, path) })
+    } catch (err) {
+      await db
+        .from('room_visualizations')
+        .update({ status: 'failed', error: String(err?.message || err).slice(0, 500) })
+        .eq('id', record.id)
+      throw err
+    }
+  }),
+)
+
+/** Latest finished visualization for this package (and room, when given). */
+router.get(
+  '/visualizations/latest',
+  requireUser,
+  route(async (req, res) => {
+    const db = getAdmin()
+    const packageId = requireString(req.query.packageId, 'packageId', { max: 120 })
+    const roomKey = requireString(req.query.roomKey, 'roomKey', { max: 120, optional: true })
+    let query = db
+      .from('room_visualizations')
+      .select('id, image_path, created_at')
+      .eq('user_id', req.user.id)
+      .eq('package_id', packageId)
+      .eq('status', 'done')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (roomKey) query = query.eq('room_key', roomKey)
+    const [latest] = unwrap(await query)
+    if (!latest?.image_path) {
+      res.json({ visualization: null })
+      return
+    }
+    res.json({
+      visualization: {
+        id: latest.id,
+        createdAt: latest.created_at,
+        imageUrl: await signedVisualizationUrl(db, latest.image_path),
+      },
+    })
+  }),
+)
 
 function cleanAllocationChild(raw, index) {
   const name = String(raw?.name || '').trim()

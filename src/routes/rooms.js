@@ -17,7 +17,7 @@ const SIGNED_URL_SECONDS = 60 * 60 * 24 * 7
 
 function dailyVisualizationLimit() {
   const limit = Number.parseInt(process.env.VISUALIZE_DAILY_LIMIT || '', 10)
-  return Number.isInteger(limit) && limit > 0 ? limit : 5
+  return Number.isInteger(limit) && limit > 0 ? limit : 30
 }
 
 async function signedVisualizationUrl(db, path) {

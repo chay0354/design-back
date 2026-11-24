@@ -1,4 +1,5 @@
 import { HttpError } from './http.js'
+import { layoutSimilarity } from './imageSimilarity.js'
 import { ROOM_DRESSING_PROMPT } from './roomDressingPrompt.js'
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -50,8 +51,21 @@ export async function fetchPackageImage(url) {
   return { mimeType, data: buffer.toString('base64') }
 }
 
-/** Sends the package image + room photo to Gemini and returns the generated image. */
-export async function generateRoomVisualization({ packageImage, roomImage }) {
+const EDIT_ROOM_REMINDER =
+  'ערוך את צילום החדר הקיים של הלקוח: אותם קירות, אותו חלון, אותם ארונות, אותה רצפה ואותה זווית צילום. ' +
+  'קח מהדמיית החבילה רק את הריהוט המשלים, הצבעים, התמונות, המדפים, הטקסטיל והדקורציה. ' +
+  'אסור להחזיר את הדמיית החבילה עצמה או חדר עם המבנה והזווית שלה.\n' +
+  "Edit the client's room photo. Keep its walls, window, built-ins, floor and camera angle. " +
+  'Do not return the package rendering or a room with its layout.'
+
+const RETRY_REMINDER =
+  'הניסיון הקודם החזיר את חדר החבילה במקום את החדר של הלקוח. ' +
+  'הפעם התוצאה חייבת להיות צילום החדר של הלקוח, מזוהה לפי החלון, הקירות והזווית שלו, עם פריטי החבילה בתוכו.\n' +
+  "The previous attempt returned the package room. This time the output must be the client's own room, " +
+  'recognizable by its window, walls and angle, dressed with the package items.'
+
+/** Sends the room photo + package image to Gemini and returns the generated image. */
+export async function generateRoomVisualization({ packageImage, roomImage, retry = false, timeoutMs = 80000 }) {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) throw new HttpError(503, 'שירות ההדמיה עדיין לא הוגדר')
   const model = process.env.GEMINI_IMAGE_MODEL || DEFAULT_IMAGE_MODEL
@@ -59,17 +73,19 @@ export async function generateRoomVisualization({ packageImage, roomImage }) {
   const res = await fetch(`${GEMINI_URL}/${model}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-    signal: AbortSignal.timeout(55000),
+    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       contents: [
         {
           role: 'user',
           parts: [
             { text: ROOM_DRESSING_PROMPT },
-            { text: 'תמונה 1 – הדמיית חבילת העיצוב של PETITE DREAMS.' },
+            { text: 'תמונה 1 – הדמיית חבילת העיצוב של PETITE DREAMS. מקור לפריטים ולצבעים בלבד, לא הבסיס לעריכה.' },
             { inlineData: packageImage },
-            { text: 'תמונה 2 – צילום החדר הקיים של הלקוח.' },
+            { text: 'תמונה 2 – צילום החדר הקיים של הלקוח. זה הבסיס היחיד לעריכה.' },
             { inlineData: roomImage },
+            { text: EDIT_ROOM_REMINDER },
+            ...(retry ? [{ text: RETRY_REMINDER }] : []),
           ],
         },
       ],
@@ -94,4 +110,14 @@ export async function generateRoomVisualization({ packageImage, roomImage }) {
     throw new HttpError(502, 'לא התקבלה הדמיה מהתמונה הזו. נסו תמונה אחרת של החדר')
   }
   return { model, mimeType: image.mimeType || 'image/png', buffer: Buffer.from(image.data, 'base64') }
+}
+
+/** True when the output keeps the package rendering's layout instead of the client's room. */
+export async function copiedPackageRoom({ output, packageImage, roomImage }) {
+  const outputBuffer = output.buffer
+  const [toPackage, toRoom] = await Promise.all([
+    layoutSimilarity(outputBuffer, Buffer.from(packageImage.data, 'base64')),
+    layoutSimilarity(outputBuffer, Buffer.from(roomImage.data, 'base64')),
+  ])
+  return { copied: toPackage >= 0.55 && toPackage > toRoom + 0.12, toPackage, toRoom }
 }

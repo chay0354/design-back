@@ -4,6 +4,7 @@ import { getAdmin, unwrap } from '../lib/supabaseAdmin.js'
 import { HttpError, requireString, route } from '../lib/http.js'
 import { isAllowedOrigin } from '../lib/origins.js'
 import {
+  copiedPackageRoom,
   fetchPackageImage,
   generateRoomVisualization,
   parseImageDataUrl,
@@ -72,7 +73,28 @@ router.post(
 
     try {
       const packageImage = await fetchPackageImage(packageImageUrl)
-      const result = await generateRoomVisualization({ packageImage, roomImage })
+      const started = Date.now()
+      let result = await generateRoomVisualization({ packageImage, roomImage, timeoutMs: 50000 })
+      let verdict = await copiedPackageRoom({ output: result, packageImage, roomImage }).catch((err) => {
+        console.error('visualization compare failed', err?.message)
+        return { copied: false }
+      })
+      if (verdict.copied) {
+        console.warn('visualization copied the package room', verdict)
+        const retryBudget = 105000 - (Date.now() - started)
+        if (retryBudget > 20000) {
+          result = await generateRoomVisualization({
+            packageImage,
+            roomImage,
+            retry: true,
+            timeoutMs: Math.min(50000, retryBudget),
+          })
+          verdict = await copiedPackageRoom({ output: result, packageImage, roomImage }).catch(() => ({ copied: false }))
+        }
+      }
+      if (verdict.copied) {
+        throw new HttpError(502, 'ההדמיה חזרה על תמונת החבילה במקום החדר. נסו שוב')
+      }
       const extension = result.mimeType === 'image/jpeg' ? 'jpg' : result.mimeType === 'image/webp' ? 'webp' : 'png'
       const path = `${user.id}/${record.id}.${extension}`
       const { error: uploadError } = await db.storage

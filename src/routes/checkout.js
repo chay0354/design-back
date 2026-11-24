@@ -296,6 +296,8 @@ router.post(
           commission_amount: commissionFor(quote.total, commissionPercent),
           voucher_id: voucherUsed > 0 ? voucher.id : null,
           voucher_packages_used: voucherUsed,
+          phone: typeof req.body?.phone === 'string' ? req.body.phone.replace(/[^\d+\-\s]/g, '').trim().slice(0, 30) : '',
+          marketing_opt_in: req.body?.marketingOptIn === true,
         })
         .select('*')
         .single(),

@@ -38,3 +38,15 @@ test('redirect from a product to the home page is broken', () => {
 test('normal product page is ok', () => {
   assert.equal(classifyResponse({ status: 200, finalUrl: item, originalUrl: item, html: bigPage() }).status, 'ok')
 })
+
+const i18n = '"i18nMap":{"PAGE_NOT_FOUND_NOTICE":"\u05de\u05e6\u05d8\u05e2\u05e8\u05d9\u05dd, \u05d4\u05e4\u05e8\u05d9\u05d8 \u05d0\u05d9\u05e0\u05d5 \u05d6\u05de\u05d9\u05df \u05db\u05e2\u05ea","X":"Sorry, this item is gone"}'
+
+test('AliExpress i18n table does not make a live product look removed', () => {
+  const html = bigPage(`<meta property="og:title" content="Kids shelf" />${i18n}`)
+  assert.equal(classifyResponse({ status: 200, finalUrl: item, originalUrl: item, html }).status, 'ok')
+})
+
+test('AliExpress page with an empty og:title is a removed product', () => {
+  const html = bigPage(`<meta property="og:title" content="" />${i18n}`)
+  assert.equal(classifyResponse({ status: 200, finalUrl: item, originalUrl: item, html }).status, 'broken')
+})

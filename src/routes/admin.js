@@ -18,6 +18,7 @@ import {
   startRun,
   checkLink,
 } from '../lib/linkCheck.js'
+import { autoFixBrokenLinks, suggestReplacements } from '../lib/linkSuggest.js'
 
 const router = Router()
 router.use(requireAdmin)
@@ -574,7 +575,27 @@ router.post(
   route(async (req, res) => {
     const url = requireString(req.body?.url, 'url', { max: 2000 })
     if (!/^https?:\/\//i.test(url)) throw new HttpError(400, 'קישור לא תקין')
-    res.json({ result: await replaceLinkInPackage(req.params.id, url) })
+    const everywhere = req.body?.everywhere === true
+    res.json({ result: await replaceLinkInPackage(req.params.id, url, { everywhere }) })
+  }),
+)
+
+/** Working replacement links for one broken link (other packages, cleaned URL, supplier search). */
+router.get(
+  '/links/:id/suggestions',
+  route(async (req, res) => {
+    res.json({ suggestions: await suggestReplacements(req.params.id) })
+  }),
+)
+
+/** Swaps broken links for the same product's working link from another package. Call until `remaining` is 0. */
+router.post(
+  '/links/auto-fix',
+  route(async (req, res) => {
+    const exclude = Array.isArray(req.body?.exclude)
+      ? req.body.exclude.filter((value) => typeof value === 'string').slice(0, 2000)
+      : []
+    res.json(await autoFixBrokenLinks({ exclude }))
   }),
 )
 

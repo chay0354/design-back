@@ -56,10 +56,21 @@ export function classifyResponse({ status, finalUrl, originalUrl, html }) {
   }
 
   if (html) {
-    if (REMOVED_PATTERNS.some((re) => re.test(html))) {
+    // AliExpress ships its whole translation table (including "item is not
+    // available" messages) inside every page, so strip it before matching.
+    const page = html.replace(/"i18nMap"\s*:\s*\{[^}]*\}/g, '')
+    if (originalId) {
+      const ogTitle = page.match(/property=["']og:title["']\s+content=["']([^"']*)["']/i)
+      // A live product page always has a title; a removed one has an empty one.
+      if (ogTitle && ogTitle[1].trim()) return { status: 'ok', problem: '' }
+      if (ogTitle && !isBlockedHtml(page)) {
+        return { status: 'broken', problem: 'המוצר אינו זמין יותר אצל הספק' }
+      }
+    }
+    if (REMOVED_PATTERNS.some((re) => re.test(page))) {
       return { status: 'broken', problem: 'המוצר אינו זמין יותר אצל הספק' }
     }
-    if (isBlockedHtml(html)) return { status: 'unverified', problem: 'האתר חסם בדיקה אוטומטית' }
+    if (isBlockedHtml(page)) return { status: 'unverified', problem: 'האתר חסם בדיקה אוטומטית' }
   }
 
   return { status: 'ok', problem: '' }
@@ -325,10 +336,15 @@ ${button(`${siteUrl()}/admin?tab=links`, 'לניהול הקישורים')}`
  * Replaces a product link in a package (published data, and the draft when
  * there is one) and resets its check status.
  */
-export async function replaceLinkInPackage(checkId, newUrl) {
+export async function replaceLinkInPackage(checkId, newUrl, { everywhere = false } = {}) {
   const db = getAdmin()
   const check = unwrap(await db.from('product_link_checks').select('*').eq('id', checkId).single())
-  const pkgRow = unwrap(await db.from('app_packages').select('*').eq('id', check.package_id).single())
+  // The same product link is usually shared by many packages — fix them all in one go.
+  const rows = everywhere
+    ? unwrap(await db.from('product_link_checks').select('*').eq('url', check.url))
+    : [check]
+  const result = await checkLink(newUrl, { delay: 1000 })
+  const now = new Date().toISOString()
 
   const swap = (pkg) => {
     if (!pkg) return pkg
@@ -344,31 +360,32 @@ export async function replaceLinkInPackage(checkId, newUrl) {
     return changed ? { ...pkg, shoppingCategories } : pkg
   }
 
-  const now = new Date().toISOString()
-  unwrap(
-    await db
-      .from('app_packages')
-      .update({ data: swap(pkgRow.data), draft: swap(pkgRow.draft), updated_at: now })
-      .eq('id', check.package_id),
-  )
+  for (const row of rows) {
+    const pkgRow = unwrap(await db.from('app_packages').select('*').eq('id', row.package_id).single())
+    unwrap(
+      await db
+        .from('app_packages')
+        .update({ data: swap(pkgRow.data), draft: swap(pkgRow.draft), updated_at: now })
+        .eq('id', row.package_id),
+    )
 
-  unwrap(await db.from('product_link_checks').delete().eq('id', checkId))
-  const result = await checkLink(newUrl, { delay: 1000 })
-  unwrap(
-    await db.from('product_link_checks').upsert(
-      {
-        package_id: check.package_id,
-        package_name: check.package_name,
-        category: check.category,
-        item_name: check.item_name,
-        url: newUrl,
-        status: result.status,
-        http_status: result.httpStatus,
-        problem: result.problem,
-        last_checked_at: now,
-      },
-      { onConflict: 'package_id,url' },
-    ),
-  )
-  return result
+    unwrap(await db.from('product_link_checks').delete().eq('id', row.id))
+    unwrap(
+      await db.from('product_link_checks').upsert(
+        {
+          package_id: row.package_id,
+          package_name: row.package_name,
+          category: row.category,
+          item_name: row.item_name,
+          url: newUrl,
+          status: result.status,
+          http_status: result.httpStatus,
+          problem: result.problem,
+          last_checked_at: now,
+        },
+        { onConflict: 'package_id,url' },
+      ),
+    )
+  }
+  return { ...result, replaced: rows.length }
 }
